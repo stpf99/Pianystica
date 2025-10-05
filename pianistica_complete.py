@@ -711,9 +711,9 @@ class PianoLearningApp(QMainWindow):
 
         self.controls = QGroupBox("Mode Settings")
         ctrl_layout = QHBoxLayout(self.controls)
-        self.bpm = QSpinBox(); self.bpm.setRange(20, 300); self.bpm.setValue(120); self.bpm.setSuffix(" BPM")
-        self.notes_per_sec = QSpinBox(); self.notes_per_sec.setRange(1, 10); self.notes_per_sec.setValue(5)
-        self.pitch_dev = QSpinBox(); self.pitch_dev.setRange(1, 12); self.pitch_dev.setValue(4)
+        self.bpm = QSpinBox(); self.bpm.setRange(20, 300); self.bpm.setValue(50); self.bpm.setSuffix(" BPM")
+        self.notes_per_sec = QSpinBox(); self.notes_per_sec.setRange(1, 10); self.notes_per_sec.setValue(3)
+        self.pitch_dev = QSpinBox(); self.pitch_dev.setRange(1, 12); self.pitch_dev.setValue(2)
         for w in [
             ("BPM", self.bpm),
             ("Mean Notes/s", self.notes_per_sec),
