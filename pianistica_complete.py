@@ -1,5 +1,5 @@
 # ================================
-# pianistica.py — Unified Music Engine with MixedModes, Conductive Mode, and Twin Conductive Options
+# pianistica.py — Unified Music Engine with MixedModes, Conductive Mode, Twin Conductive Options, and Time Signature Option
 # ================================
 import sys
 import random
@@ -228,7 +228,7 @@ class MusicThinker:
         analysis.pleasantness = 0.4 * analysis.scale_coherence + 0.3 * analysis.pitch_variety + 0.2 * density_score + 0.1 * jump_score
         return analysis.pleasantness
 
-    def generate_proposals(self, config: ModeConfig, section: str, duration: float) -> List[List[MusicNote]]:
+    def generate_proposals(self, config: ModeConfig, section: str, duration: float, time_signature: str = "4/4") -> List[List[MusicNote]]:
         proposals = []
         original_motif = self.engine.motif[:]
         variation_schemes = list(self.engine.arranger.variation_schemes.keys())
@@ -255,26 +255,26 @@ class MusicThinker:
             )
             
             if config.structure == "structured":
-                self.engine.motif = self.engine._generate_motif(modified_config, duration, self.engine.twin_conductive, self.engine.last_mouse_x, self.engine.last_mouse_y)
+                self.engine.motif = self.engine._generate_motif(modified_config, duration, self.engine.twin_conductive, self.engine.last_mouse_x, self.engine.last_mouse_y, time_signature)
                 scheme = variation_schemes[i % len(variation_schemes)]
                 notes = self.engine.arranger.apply_variation(
                     self.engine.motif, modified_config, section, self.engine.current_key, self.engine._nearest_scale_pitch, scheme
                 )
             elif config.structure == "chaos":
-                notes = self.engine._generate_chaos(modified_config, duration, self.engine.twin_conductive, self.engine.last_mouse_x, self.engine.last_mouse_y)
+                notes = self.engine._generate_chaos(modified_config, duration, self.engine.twin_conductive, self.engine.last_mouse_x, self.engine.last_mouse_y, time_signature)
                 if self.engine.generation_count > 1:
-                    notes = self.engine._simplify_notes(notes, modified_config, self.engine.twin_conductive, self.engine.last_mouse_x, self.engine.last_mouse_y)
+                    notes = self.engine._simplify_notes(notes, modified_config, self.engine.twin_conductive, self.engine.last_mouse_x, self.engine.last_mouse_y, time_signature)
             else:  # ambient
-                notes = self.engine._generate_chaos(modified_config, duration, self.engine.twin_conductive, self.engine.last_mouse_x, self.engine.last_mouse_y)
-                notes = self.engine._simplify_notes(notes, modified_config, self.engine.twin_conductive, self.engine.last_mouse_x, self.engine.last_mouse_y)
+                notes = self.engine._generate_chaos(modified_config, duration, self.engine.twin_conductive, self.engine.last_mouse_x, self.engine.last_mouse_y, time_signature)
+                notes = self.engine._simplify_notes(notes, modified_config, self.engine.twin_conductive, self.engine.last_mouse_x, self.engine.last_mouse_y, time_signature)
             
             proposals.append(notes)
             self.engine.motif = original_motif[:]
 
         return proposals
 
-    def select_best_proposal(self, config: ModeConfig, section: str, duration: float) -> List[MusicNote]:
-        proposals = self.generate_proposals(config, section, duration)
+    def select_best_proposal(self, config: ModeConfig, section: str, duration: float, time_signature: str = "4/4") -> List[MusicNote]:
+        proposals = self.generate_proposals(config, section, duration, time_signature)
         if not proposals:
             return []
         scores = [self.evaluate_proposal(proposal, config) for proposal in proposals]
@@ -424,17 +424,21 @@ class GlobalMusicEngine:
         self.bpm = 120
         self.conductive_mode = False
         self.twin_conductive = False
+        self.time_signature = "4/4"
+        self.use_time_signature = False
         self.conductive_bpm_adjust = 0
         self.conductive_velocity_adjust = 0
         self.last_mouse_x = 100
         self.last_mouse_y = 300
 
-    def set_mode(self, mode: str, genre: str = "Classical", bpm: int = 120, conductive: bool = False, twin_conductive: bool = False):
+    def set_mode(self, mode: str, genre: str = "Classical", bpm: int = 120, conductive: bool = False, twin_conductive: bool = False, time_signature: str = "4/4", use_time_signature: bool = False):
         self.current_mode = mode if mode in self.mode_configs else "Song Mode"
         self.current_genre = genre if genre in self.genre_configs else "Classical"
         self.bpm = bpm
         self.conductive_mode = conductive
         self.twin_conductive = twin_conductive
+        self.time_signature = time_signature if time_signature in ["3/4", "4/4", "6/8", "12/8"] else "4/4"
+        self.use_time_signature = use_time_signature
         self.generation_count = 0
         self.last_notes = []
         self.motif = []
@@ -484,22 +488,42 @@ class GlobalMusicEngine:
         )
         return modified
 
-    def _generate_motif(self, config: ModeConfig, duration: float, twin_conductive: bool = False, mouse_x: float = 100, mouse_y: float = 300) -> List[MusicNote]:
+    def _get_time_signature_params(self, time_signature: str, bpm: int) -> Tuple[float, int]:
+        if time_signature == "3/4":
+            beat_duration = 60.0 / bpm  # Quarter note
+            beats_per_measure = 3
+        elif time_signature == "4/4":
+            beat_duration = 60.0 / bpm
+            beats_per_measure = 4
+        elif time_signature == "6/8":
+            beat_duration = 120.0 / bpm  # Eighth note
+            beats_per_measure = 6
+        elif time_signature == "12/8":
+            beat_duration = 120.0 / bpm
+            beats_per_measure = 12
+        else:
+            beat_duration = 60.0 / bpm
+            beats_per_measure = 4
+        return beat_duration, beats_per_measure
+
+    def _generate_motif(self, config: ModeConfig, duration: float, twin_conductive: bool = False, mouse_x: float = 100, mouse_y: float = 300, time_signature: str = "4/4") -> List[MusicNote]:
         notes = []
         t = 0.0
         last_pitch = self.last_notes[-1].pitch if self.last_notes else random.randint(60, 72)
         scale = self._get_scale(config.scale_type)
         genre_config = self.genre_configs[self.current_genre]
+        beat_duration, beats_per_measure = self._get_time_signature_params(time_signature, self.bpm)
+        rhythm_quantum = beat_duration if self.use_time_signature else config.mean_rhythm_quantum
         while t < duration:
-            slot = int(t / config.mean_rhythm_quantum)
-            if slot >= int(duration / config.mean_rhythm_quantum):
+            slot = int(t / rhythm_quantum)
+            if slot >= int(duration / rhythm_quantum):
                 break
             pitch = last_pitch + random.randint(-config.mean_pitch_deviation, config.mean_pitch_deviation)
             if twin_conductive:
-                bass_weight = 1 - (mouse_x / 200)  # Left = more bass
-                soprano_weight = mouse_x / 200    # Right = more soprano
+                bass_weight = 1 - (mouse_x / 200)
+                soprano_weight = mouse_x / 200
                 pitch_range = random.choices(
-                    [(21, 48), (60, 72), (72, 108)],  # Bass, Middle, Soprano
+                    [(21, 48), (60, 72), (72, 108)],
                     weights=[bass_weight, 0.5, soprano_weight],
                     k=1
                 )[0]
@@ -513,7 +537,11 @@ class GlobalMusicEngine:
                 config.mean_duration_range[0] * (0.5 + 0.5 * duration_factor),
                 config.mean_duration_range[1] * (0.5 + 0.5 * duration_factor)
             )
-            note_time = round(t / config.mean_rhythm_quantum) * config.mean_rhythm_quantum + genre_config.rhythm_offset
+            note_time = round(t / rhythm_quantum) * rhythm_quantum + genre_config.rhythm_offset
+            if self.use_time_signature:
+                measure = int(note_time / (beat_duration * beats_per_measure))
+                beat_in_measure = (note_time % (beat_duration * beats_per_measure)) / beat_duration
+                note_time = measure * beat_duration * beats_per_measure + round(beat_in_measure) * beat_duration
             notes.append(MusicNote(
                 pitch=pitch,
                 velocity=velocity,
@@ -521,22 +549,24 @@ class GlobalMusicEngine:
                 duration=note_duration,
                 origin="motif"
             ))
-            t += config.mean_rhythm_quantum
+            t += rhythm_quantum
         return sorted(notes, key=lambda x: x.time)
 
-    def _generate_chaos(self, config: ModeConfig, duration: float, twin_conductive: bool = False, mouse_x: float = 100, mouse_y: float = 300) -> List[MusicNote]:
+    def _generate_chaos(self, config: ModeConfig, duration: float, twin_conductive: bool = False, mouse_x: float = 100, mouse_y: float = 300, time_signature: str = "4/4") -> List[MusicNote]:
         notes = []
         notes_per_slot = [0] * int(duration / config.mean_rhythm_quantum + 1)
         scale = self._get_scale(config.scale_type)
         last_pitch = self.last_notes[-1].pitch if self.last_notes else random.randint(60, 72)
         genre_config = self.genre_configs[self.current_genre]
+        beat_duration, beats_per_measure = self._get_time_signature_params(time_signature, self.bpm)
+        rhythm_quantum = beat_duration if self.use_time_signature else config.mean_rhythm_quantum
         t = 0.0
         while t < duration:
-            slot = int(t / config.mean_rhythm_quantum)
+            slot = int(t / rhythm_quantum)
             if slot >= len(notes_per_slot) or notes_per_slot[slot] >= config.mean_max_notes_per_second:
-                t += config.mean_rhythm_quantum
+                t += rhythm_quantum
                 continue
-            if random.random() < config.mean_notes_per_second * config.mean_rhythm_quantum:
+            if random.random() < config.mean_notes_per_second * rhythm_quantum:
                 pitch = last_pitch + random.randint(-config.mean_pitch_deviation, config.mean_pitch_deviation)
                 if twin_conductive:
                     bass_weight = 1 - (mouse_x / 200)
@@ -553,7 +583,11 @@ class GlobalMusicEngine:
                 velocity = max(1, min(127, velocity + self.conductive_velocity_adjust))
                 duration_factor = mouse_y / 600 if twin_conductive else 1.0
                 note_duration = config.mean_duration_range[0] * (0.5 + 0.5 * duration_factor)
-                note_time = round(t / config.mean_rhythm_quantum) * config.mean_rhythm_quantum + genre_config.rhythm_offset
+                note_time = round(t / rhythm_quantum) * rhythm_quantum + genre_config.rhythm_offset
+                if self.use_time_signature:
+                    measure = int(note_time / (beat_duration * beats_per_measure))
+                    beat_in_measure = (note_time % (beat_duration * beats_per_measure)) / beat_duration
+                    note_time = measure * beat_duration * beats_per_measure + round(beat_in_measure) * beat_duration
                 notes.append(MusicNote(
                     pitch=pitch,
                     velocity=velocity,
@@ -562,15 +596,17 @@ class GlobalMusicEngine:
                     origin="chaos"
                 ))
                 notes_per_slot[slot] += 1
-            t += config.mean_rhythm_quantum
+            t += rhythm_quantum
         return sorted(notes, key=lambda x: x.time)
 
-    def _simplify_notes(self, notes: List[MusicNote], config: ModeConfig, twin_conductive: bool = False, mouse_x: float = 100, mouse_y: float = 300) -> List[MusicNote]:
+    def _simplify_notes(self, notes: List[MusicNote], config: ModeConfig, twin_conductive: bool = False, mouse_x: float = 100, mouse_y: float = 300, time_signature: str = "4/4") -> List[MusicNote]:
         scale = self._get_scale(config.scale_type)
         simplified = []
         notes_per_slot = [0] * int(max(n.time for n in notes) / config.mean_rhythm_quantum + 1) if notes else []
         last_pitch = self.last_notes[-1].pitch if self.last_notes else random.randint(60, 72)
         genre_config = self.genre_configs[self.current_genre]
+        beat_duration, beats_per_measure = self._get_time_signature_params(time_signature, self.bpm)
+        rhythm_quantum = beat_duration if self.use_time_signature else config.mean_rhythm_quantum
         for note in notes:
             pitch = self._nearest_scale_pitch(note.pitch, scale)
             if twin_conductive:
@@ -590,7 +626,11 @@ class GlobalMusicEngine:
             velocity = max(1, min(127, velocity + self.conductive_velocity_adjust))
             duration_factor = mouse_y / 600 if twin_conductive else 1.0
             note_duration = config.mean_duration_range[0] * (0.5 + 0.5 * duration_factor)
-            note_time = round(note.time / config.mean_rhythm_quantum) * config.mean_rhythm_quantum + genre_config.rhythm_offset
+            note_time = round(note.time / rhythm_quantum) * rhythm_quantum + genre_config.rhythm_offset
+            if self.use_time_signature:
+                measure = int(note_time / (beat_duration * beats_per_measure))
+                beat_in_measure = (note_time % (beat_duration * beats_per_measure)) / beat_duration
+                note_time = measure * beat_duration * beats_per_measure + round(beat_in_measure) * beat_duration
             simplified_note = MusicNote(
                 pitch=pitch,
                 velocity=velocity,
@@ -599,7 +639,7 @@ class GlobalMusicEngine:
                 origin="simplified",
                 coherence_score=0.8
             )
-            slot = int(note_time / config.mean_rhythm_quantum)
+            slot = int(note_time / rhythm_quantum)
             if slot < len(notes_per_slot) and notes_per_slot[slot] < config.mean_max_notes_per_second:
                 simplified.append(simplified_note)
                 notes_per_slot[slot] += 1
@@ -637,12 +677,13 @@ class GlobalMusicEngine:
         bpm = self.bpm if any(n.origin == "chord" for n in notes) else None
         conductive_text = f", Conductive: {self.conductive_mode}, Speed: {self.conductive_bpm_adjust:.1f} BPM" if self.conductive_mode else ""
         twin_text = f", Twin: {self.twin_conductive}, Bass: {1 - self.last_mouse_x/200:.2f}, Soprano: {self.last_mouse_x/200:.2f}, Dur: {self.last_mouse_y/600:.2f}" if self.twin_conductive else ""
+        time_sig_text = f", TimeSig: {self.time_signature}" if self.use_time_signature else ""
         bpm_text = f", BPM: {bpm}" if bpm else ""
-        analysis.structure_summary = f"Pitch Range: {pitch_range}, Density: {note_density:.2f} notes/s, Rhythm: {rhythm_pattern}, Melody: {melody_count}, Chords: {chord_count}, Roots: {unique_roots}{bpm_text}{conductive_text}{twin_text}"
+        analysis.structure_summary = f"Pitch Range: {pitch_range}, Density: {note_density:.2f} notes/s, Rhythm: {rhythm_pattern}, Melody: {melody_count}, Chords: {chord_count}, Roots: {unique_roots}{bpm_text}{conductive_text}{twin_text}{time_sig_text}"
         
         return analysis
 
-    def _generate_chords(self, notes: List[MusicNote], config: ModeConfig, duration: float, section: str, twin_conductive: bool = False, mouse_x: float = 100, mouse_y: float = 300) -> List[MusicNote]:
+    def _generate_chords(self, notes: List[MusicNote], config: ModeConfig, duration: float, section: str, twin_conductive: bool = False, mouse_x: float = 100, mouse_y: float = 300, time_signature: str = "4/4") -> List[MusicNote]:
         if not notes:
             return []
         scale = self._get_scale(config.scale_type)
@@ -681,14 +722,15 @@ class GlobalMusicEngine:
         start_time = min(n.time for n in notes)
         end_time = max(n.time + n.duration for n in notes)
         sequence_duration = end_time - start_time
-        pulse_interval = config.mean_rhythm_quantum
+        beat_duration, beats_per_measure = self._get_time_signature_params(time_signature, self.bpm)
+        pulse_interval = beat_duration * beats_per_measure if self.use_time_signature else config.mean_rhythm_quantum
         num_pulses = int(sequence_duration / pulse_interval) + 1
         
         for i, t in enumerate([start_time + i * pulse_interval for i in range(num_pulses)]):
             if t >= end_time:
                 break
             root_pc = progression[i % len(progression)]
-            root = self._nearest_scale_pitch(root_pc + (24 if twin_conductive and mouse_x < 100 else 36), scale)  # Lower octave for bass bias
+            root = self._nearest_scale_pitch(root_pc + (24 if twin_conductive and mouse_x < 100 else 36), scale)
             third = self._nearest_scale_pitch(root + (4 if config.scale_type != "minor" else 3), scale)
             fifth = self._nearest_scale_pitch(root + 7, scale)
             seventh = self._nearest_scale_pitch(root + (11 if config.scale_type != "minor" else 10), scale)
@@ -734,11 +776,12 @@ class GlobalMusicEngine:
         weights = [m.weight for m in modes]
         return random.choices(modes, weights=weights, k=1)[0]
 
-    def next_iteration(self, duration: float = 8.0, add_chordal: bool = False, twin_conductive: bool = False, mouse_x: float = 100, mouse_y: float = 300) -> Dict:
+    def next_iteration(self, duration: float = 8.0, add_chordal: bool = False, twin_conductive: bool = False, mouse_x: float = 100, mouse_y: float = 300, time_signature: str = "4/4") -> Dict:
         self.generation_count += 1
         self.twin_conductive = twin_conductive
         self.last_mouse_x = mouse_x
         self.last_mouse_y = mouse_y
+        self.time_signature = time_signature
         config = self.mode_configs[self.current_mode]
         genre = random.choice(list(self.genre_configs.keys()))
         section = ["intro", "verse", "chorus", "verse", "chorus", "outro"][min(self.section_index, 5)]
@@ -753,18 +796,18 @@ class GlobalMusicEngine:
 
         if config.structure == "structured" or self.current_mode == "Chordal":
             if not self.motif or self.generation_count % 6 == 0:
-                self.motif = self._generate_motif(config, duration, twin_conductive, mouse_x, mouse_y)
-            notes = self.thinker.select_best_proposal(config, section, self.thinker.lookahead_duration)
+                self.motif = self._generate_motif(config, duration, twin_conductive, mouse_x, mouse_y, time_signature)
+            notes = self.thinker.select_best_proposal(config, section, self.thinker.lookahead_duration, time_signature)
             notes = [n for n in notes if n.time < duration]
         elif config.structure == "chaos":
             if self.generation_count == 1:
-                notes = self._generate_chaos(config, duration, twin_conductive, mouse_x, mouse_y)
+                notes = self._generate_chaos(config, duration, twin_conductive, mouse_x, mouse_y, time_signature)
             else:
-                notes = self._generate_chaos(config, duration, twin_conductive, mouse_x, mouse_y)
-                notes = self._simplify_notes(notes, config, twin_conductive, mouse_x, mouse_y)
+                notes = self._generate_chaos(config, duration, twin_conductive, mouse_x, mouse_y, time_signature)
+                notes = self._simplify_notes(notes, config, twin_conductive, mouse_x, mouse_y, time_signature)
         else:
-            notes = self._generate_chaos(config, duration, twin_conductive, mouse_x, mouse_y)
-            notes = self._simplify_notes(notes, config, twin_conductive, mouse_x, mouse_y)
+            notes = self._generate_chaos(config, duration, twin_conductive, mouse_x, mouse_y, time_signature)
+            notes = self._simplify_notes(notes, config, twin_conductive, mouse_x, mouse_y, time_signature)
 
         if add_chordal or self.current_mode == "Chordal":
             melody_notes = [n for n in notes if n.pitch >= 48]
@@ -776,7 +819,7 @@ class GlobalMusicEngine:
                     duration=n.duration,
                     origin="melody_shifted"
                 ) for n in notes]
-            chord_notes = self._generate_chords(notes, config, duration, section, twin_conductive, mouse_x, mouse_y)
+            chord_notes = self._generate_chords(notes, config, duration, section, twin_conductive, mouse_x, mouse_y, time_signature)
             notes = melody_notes + chord_notes
 
         analysis = self._analyze_notes(notes)
@@ -822,7 +865,9 @@ class MusicPlayer:
         bpm = self.parent.bpm.value()
         conductive = self.parent.conductive_check.isChecked()
         twin_conductive = self.parent.twin_conductive_check.isChecked()
-        self.engine.set_mode(mode, genre, bpm, conductive, twin_conductive)
+        time_signature = self.parent.time_signature_combo.currentText()
+        use_time_signature = self.parent.time_signature_check.isChecked()
+        self.engine.set_mode(mode, genre, bpm, conductive, twin_conductive, time_signature, use_time_signature)
         self.is_playing = True
         self.play_next()
         self.timer.start(8000)
@@ -846,6 +891,8 @@ class MusicPlayer:
         config.mean_duration_range = (config.mean_rhythm_quantum, config.mean_rhythm_quantum)
         
         self.engine.bpm = self.parent.bpm.value()
+        self.engine.use_time_signature = self.parent.time_signature_check.isChecked()
+        self.engine.time_signature = self.parent.time_signature_combo.currentText()
         if self.engine.conductive_mode:
             gesture_speed = self.parent.conductor_canvas.get_gesture_speed()
             bpm_adjust = int(gesture_speed / 10)  # 10 pixels/s = 1 BPM
@@ -858,7 +905,8 @@ class MusicPlayer:
             self.engine.conductive_velocity_adjust = 0
         
         if self.engine.current_mode == "Chordal" or self.parent.chordal_check.isChecked():
-            config.mean_rhythm_quantum = (60.0 / self.engine.bpm) / 2
+            beat_duration, _ = self.engine._get_time_signature_params(self.engine.time_signature, self.engine.bpm)
+            config.mean_rhythm_quantum = beat_duration if self.engine.use_time_signature else (60.0 / self.engine.bpm) / 2
             config.mean_duration_range = (config.mean_rhythm_quantum, config.mean_rhythm_quantum * 2)
         
         if mode == "MixedModes":
@@ -873,7 +921,8 @@ class MusicPlayer:
             add_chordal=self.parent.chordal_check.isChecked(),
             twin_conductive=self.engine.twin_conductive,
             mouse_x=mouse_x,
-            mouse_y=mouse_y
+            mouse_y=mouse_y,
+            time_signature=self.engine.time_signature
         )
         self.parent.question_label.setText(iteration_data['name'])
         for (note, vel, t, duration) in iteration_data['notes']:
@@ -973,6 +1022,19 @@ class PianoLearningApp(QMainWindow):
         self.twin_conductive_check.setChecked(False)
         self.twin_conductive_check.stateChanged.connect(self.switch_mode)
         layout.addWidget(self.twin_conductive_check)
+
+        self.time_signature_check = QCheckBox("Use Time Signature")
+        self.time_signature_check.setChecked(False)
+        self.time_signature_check.stateChanged.connect(self.switch_mode)
+        layout.addWidget(self.time_signature_check)
+
+        self.time_signature_combo = QComboBox()
+        self.time_signature_combo.addItems(["3/4", "4/4", "6/8", "12/8"])
+        self.time_signature_combo.setEnabled(False)
+        self.time_signature_check.stateChanged.connect(lambda: self.time_signature_combo.setEnabled(self.time_signature_check.isChecked()))
+        self.time_signature_combo.currentTextChanged.connect(self.switch_mode)
+        layout.addWidget(QLabel("Time Signature:"))
+        layout.addWidget(self.time_signature_combo)
 
         main_layout.addWidget(controls_widget)
 
